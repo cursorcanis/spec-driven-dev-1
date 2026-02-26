@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Analyst Executive Dashboard</title>
+    <!-- Modern Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="brand">
+                <div class="brand-icon"></div>
+                <h2>AnalytiQ</h2>
+            </div>
+            <ul class="nav-links">
+                <li class="active">Overview</li>
+                <li>Reports</li>
+                <li>Data Sources</li>
+                <li>Settings</li>
+            </ul>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="header">
+                <div>
+                    <h1>Executive Overview</h1>
+                    <p class="subtitle">Real-time macro data & API metrics</p>
+                </div>
+                <!-- Status indicators -->
+                <div class="status-indicator">
+                    <span class="pulse"></span> System Live
+                </div>
+            </header>
+
+            <!-- KPI Cards -->
+            <section class="kpi-grid">
+                <div class="kpi-card glass">
+                    <h3>US Population (Latest)</h3>
+                    <h2 id="kpi-population">Loading...</h2>
+                    <p class="kpi-trend" id="kpi-population-trend">--</p>
+                </div>
+                <div class="kpi-card glass">
+                    <h3>Global Crypto Market Cap</h3>
+                    <h2 id="kpi-marketcap">Loading...</h2>
+                    <p class="kpi-trend positive" id="kpi-btc-dom">--</p>
+                </div>
+                <div class="kpi-card glass">
+                    <h3>Public APIs Tracked</h3>
+                    <h2 id="kpi-apis">Loading...</h2>
+                    <p class="kpi-trend info" id="kpi-endpoints">--</p>
+                </div>
+            </section>
+
+            <!-- Charts Section -->
+            <section class="charts-grid">
+                <div class="chart-container glass">
+                    <div class="chart-header">
+                        <h3>US Population Growth Trend</h3>
+                        <button class="export-btn">⋮</button>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="censusChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-container glass">
+                    <div class="chart-header">
+                        <h3>Crypto Market Breakdown</h3>
+                        <button class="export-btn">⋮</button>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="cryptoChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-container glass span-2">
+                    <div class="chart-header">
+                        <h3>API Hosting Distribution (All-Time Snapshot)</h3>
+                        <button class="export-btn">⋮</button>
+                    </div>
+                    <div class="canvas-wrapper">
+                        <canvas id="apiDemandChart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
