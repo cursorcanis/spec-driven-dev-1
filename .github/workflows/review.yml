@@ -6,18 +6,22 @@ on:
       pr_number:
         description: Pull request number to review
         required: true
+        default: ''
         type: string
       issue_number:
         description: Issue/PR number to comment on
         required: true
+        default: ''
         type: string
       comment_id:
         description: ID of the triggering comment
         required: true
+        default: ''
         type: string
       actor:
         description: GitHub username who triggered this
         required: true
+        default: ''
         type: string
 
 permissions:
@@ -63,11 +67,9 @@ jobs:
           PR_NUMBER: ${{ inputs.pr_number }}
           ACTOR: ${{ inputs.actor }}
         run: |
-          DIFF=$(cat /tmp/pr_diff_truncated.txt)
-
-          PROMPT="You are a senior software engineer doing a code review.
-
-Review the following pull request diff for PR #$PR_NUMBER.
+          # Write the full prompt to a file to avoid CLI arg size limits
+          cat > /tmp/review_prompt.txt << 'PROMPT_EOF'
+You are a senior software engineer doing a code review.
 
 Focus on:
 - Correctness and potential bugs
@@ -89,10 +91,14 @@ What was done well.
 
 ## Verdict
 One of: ✅ Approve | 🔄 Request Changes | 💬 Comment
+PROMPT_EOF
 
----
-DIFF:
-$DIFF"
+          echo "" >> /tmp/review_prompt.txt
+          echo "---" >> /tmp/review_prompt.txt
+          echo "PR #$PR_NUMBER DIFF:" >> /tmp/review_prompt.txt
+          cat /tmp/pr_diff_truncated.txt >> /tmp/review_prompt.txt
+
+          PROMPT=$(cat /tmp/review_prompt.txt)
 
           set +e
           claude --print --dangerously-skip-permissions "$PROMPT" \

@@ -6,14 +6,17 @@ on:
       issue_number:
         description: Issue or PR number to comment on
         required: true
+        default: ''
         type: string
       comment_id:
         description: ID of the triggering comment
         required: true
+        default: ''
         type: string
       actor:
         description: GitHub username who triggered this
         required: true
+        default: ''
         type: string
 
 permissions:
