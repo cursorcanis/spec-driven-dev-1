@@ -1,0 +1,96 @@
+name: 🚀 Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue or PR number to comment on
+        required: true
+        type: string
+      comment_id:
+        description: ID of the triggering comment
+        required: true
+        type: string
+      actor:
+        description: GitHub username who triggered this
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  # Uncomment for GitHub Environments (approval gates):
+  # deployments: write
+
+# Uncomment to enable a manual approval gate for production:
+# environment: production
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Replace this placeholder with your real deploy commands ──
+
+      - name: Deploy
+        id: deploy
+        run: |
+          echo "🚀 Starting deploy..." | tee /tmp/deploy.log
+
+          # TODO: Add your actual deploy commands here. Examples:
+          #
+          # Vercel:
+          #   npx vercel --prod --token "${{ secrets.VERCEL_TOKEN }}"
+          #
+          # AWS S3 + CloudFront:
+          #   aws s3 sync ./dist s3://my-bucket --delete
+          #   aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
+          #
+          # SSH deploy:
+          #   ssh user@host "cd /app && git pull && npm ci && pm2 restart app"
+          #
+          # Docker:
+          #   docker build -t myapp . && docker push myapp
+          #   kubectl rollout restart deployment/myapp
+
+          echo "✅ Deploy complete (placeholder)" | tee -a /tmp/deploy.log
+        continue-on-error: true
+
+      # ─────────────────────────────────────────────────────────────────
+
+      - name: Post deploy result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ACTOR: ${{ inputs.actor }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+        run: |
+          DEPLOY_LOG=$(head -c 8000 /tmp/deploy.log 2>/dev/null || echo "(no output)")
+
+          if [[ "$DEPLOY_OUTCOME" == "success" ]]; then
+            STATUS_ICON="✅"
+            STATUS_TEXT="Deploy succeeded"
+          else
+            STATUS_ICON="❌"
+            STATUS_TEXT="Deploy failed"
+          fi
+
+          COMMENT_BODY=$(jq -rn \
+            --arg icon "$STATUS_ICON" \
+            --arg status "$STATUS_TEXT" \
+            --arg log "$DEPLOY_LOG" \
+            --arg actor "$ACTOR" \
+            --arg run_url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+            '"## 🚀 Deploy Result\n\n\($icon) \($status)\n\n<details>\n<summary>Deploy log</summary>\n\n```\n\($log)\n```\n\n</details>\n\n> 🤖 Requested by @\($actor) · [View run](\($run_url))"')
+
+          jq -n --arg body "$COMMENT_BODY" '{"body": $body}' \
+            | gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                --method POST \
+                --input -

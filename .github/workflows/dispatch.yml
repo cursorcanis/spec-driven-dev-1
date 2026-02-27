@@ -1,0 +1,128 @@
+name: 🚦 Command Dispatcher
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    # Only process comments that start with a slash command
+    if: startsWith(github.event.comment.body, '/')
+    steps:
+      - name: Verify collaborator permission
+        id: permission
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.event.comment.user.login }}
+          REPO: ${{ github.repository }}
+        run: |
+          PERMISSION=$(gh api "repos/$REPO/collaborators/$ACTOR/permission" \
+            --jq '.permission' 2>/dev/null || echo "none")
+          echo "Actor: $ACTOR | Permission: $PERMISSION"
+          if [[ ! "$PERMISSION" =~ ^(admin|maintain|write)$ ]]; then
+            echo "::notice::@$ACTOR has '$PERMISSION' access — command ignored"
+            exit 1
+          fi
+          echo "permission=$PERMISSION" >> "$GITHUB_OUTPUT"
+
+      - name: Add +1 reaction to acknowledge command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api "repos/$REPO/issues/comments/$COMMENT_ID/reactions" \
+            --method POST \
+            --field content='+1'
+
+      - name: Parse command and dispatch workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          ACTOR: ${{ github.event.comment.user.login }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          # toJSON produces "null" for issues, or a JSON object for PRs
+          IS_PR_JSON: ${{ toJSON(github.event.issue.pull_request) }}
+        run: |
+          # Parse first line only to extract command and args
+          FIRST_LINE=$(echo "$COMMENT_BODY" | head -n1)
+          COMMAND=$(echo "$FIRST_LINE" | awk '{print $1}' | sed 's|^/||')
+          ARGS=$(echo "$FIRST_LINE" | sed 's|^/[^ ]*[[:space:]]*||')
+
+          # Detect if comment is on a PR vs plain issue
+          if [[ "$IS_PR_JSON" != "null" ]]; then
+            IS_PR=true
+          else
+            IS_PR=false
+          fi
+
+          echo "Command: [$COMMAND] | Args: [$ARGS] | Is PR: $IS_PR"
+
+          case "$COMMAND" in
+            claude)
+              gh workflow run claude.yml \
+                --repo "$REPO" \
+                --ref "$DEFAULT_BRANCH" \
+                -f "instruction=$ARGS" \
+                -f "issue_number=$ISSUE_NUMBER" \
+                -f "comment_id=$COMMENT_ID" \
+                -f "actor=$ACTOR" \
+                -f "is_pr=$IS_PR"
+              ;;
+
+            review)
+              if [[ "$IS_PR" != "true" ]]; then
+                gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                  --method POST \
+                  --field body='❌ `/review` can only be used on pull requests.'
+                exit 0
+              fi
+              gh workflow run review.yml \
+                --repo "$REPO" \
+                --ref "$DEFAULT_BRANCH" \
+                -f "pr_number=$ISSUE_NUMBER" \
+                -f "issue_number=$ISSUE_NUMBER" \
+                -f "comment_id=$COMMENT_ID" \
+                -f "actor=$ACTOR"
+              ;;
+
+            build)
+              gh workflow run build.yml \
+                --repo "$REPO" \
+                --ref "$DEFAULT_BRANCH" \
+                -f "issue_number=$ISSUE_NUMBER" \
+                -f "comment_id=$COMMENT_ID" \
+                -f "actor=$ACTOR"
+              ;;
+
+            deploy)
+              gh workflow run deploy.yml \
+                --repo "$REPO" \
+                --ref "$DEFAULT_BRANCH" \
+                -f "issue_number=$ISSUE_NUMBER" \
+                -f "comment_id=$COMMENT_ID" \
+                -f "actor=$ACTOR"
+              ;;
+
+            *)
+              gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                --method POST \
+                --field body="❓ Unknown command: \`/$COMMAND\`
+
+Available commands:
+- \`/claude <instruction>\` — Ask Claude to make changes or answer questions
+- \`/review\` — Claude reviews the PR diff (PRs only)
+- \`/build\` — Run build & tests
+- \`/deploy\` — Deploy to production"
+              ;;
+          esac

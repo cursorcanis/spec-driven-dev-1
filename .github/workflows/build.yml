@@ -1,0 +1,112 @@
+name: 🔨 Build & Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue or PR number to comment on
+        required: true
+        type: string
+      comment_id:
+        description: ID of the triggering comment
+        required: true
+        type: string
+      actor:
+        description: GitHub username who triggered this
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+        # Skip cache if no package-lock.json exists yet
+        continue-on-error: true
+
+      # ── Replace these placeholder steps with your real build commands ──
+
+      - name: Install dependencies
+        id: install
+        run: |
+          if [[ -f package.json ]]; then
+            npm ci 2>&1 | tee /tmp/install.log
+          else
+            echo "No package.json found — skipping npm ci" | tee /tmp/install.log
+          fi
+        continue-on-error: true
+
+      - name: Build
+        id: build
+        run: |
+          if [[ -f package.json ]] && npm run build --if-present 2>/dev/null; then
+            npm run build 2>&1 | tee /tmp/build.log
+          else
+            echo "No build script found — skipping" | tee /tmp/build.log
+          fi
+        continue-on-error: true
+
+      - name: Test
+        id: test
+        run: |
+          if [[ -f package.json ]] && npm run test --if-present 2>/dev/null; then
+            npm test 2>&1 | tee /tmp/test.log
+          else
+            echo "No test script found — skipping" | tee /tmp/test.log
+          fi
+        continue-on-error: true
+
+      # ─────────────────────────────────────────────────────────────────
+
+      - name: Post build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ACTOR: ${{ inputs.actor }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          icon() { [[ "$1" == "success" ]] && echo "✅" || echo "❌"; }
+
+          INSTALL_LOG=$(head -c 4000 /tmp/install.log 2>/dev/null || echo "(no output)")
+          BUILD_LOG=$(head -c 4000 /tmp/build.log 2>/dev/null || echo "(no output)")
+          TEST_LOG=$(head -c 4000 /tmp/test.log 2>/dev/null || echo "(no output)")
+
+          OVERALL="✅ All steps passed"
+          if [[ "$INSTALL_OUTCOME" == "failure" || "$BUILD_OUTCOME" == "failure" || "$TEST_OUTCOME" == "failure" ]]; then
+            OVERALL="❌ One or more steps failed"
+          fi
+
+          COMMENT_BODY=$(jq -rn \
+            --arg overall "$OVERALL" \
+            --arg install_icon "$(icon "$INSTALL_OUTCOME")" \
+            --arg build_icon "$(icon "$BUILD_OUTCOME")" \
+            --arg test_icon "$(icon "$TEST_OUTCOME")" \
+            --arg install_log "$INSTALL_LOG" \
+            --arg build_log "$BUILD_LOG" \
+            --arg test_log "$TEST_LOG" \
+            --arg actor "$ACTOR" \
+            --arg run_url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+            '"## 🔨 Build Result\n\n\($overall)\n\n| Step | Result |\n|------|--------|\n| Install | \($install_icon) |\n| Build | \($build_icon) |\n| Test | \($test_icon) |\n\n<details>\n<summary>Install log</summary>\n\n```\n\($install_log)\n```\n</details>\n\n<details>\n<summary>Build log</summary>\n\n```\n\($build_log)\n```\n</details>\n\n<details>\n<summary>Test log</summary>\n\n```\n\($test_log)\n```\n</details>\n\n> 🤖 Requested by @\($actor) · [View run](\($run_url))"')
+
+          jq -n --arg body "$COMMENT_BODY" '{"body": $body}' \
+            | gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                --method POST \
+                --input -

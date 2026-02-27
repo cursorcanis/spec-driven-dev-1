@@ -1,0 +1,116 @@
+name: 🤖 Claude Code
+
+on:
+  workflow_dispatch:
+    inputs:
+      instruction:
+        description: Instruction for Claude
+        required: true
+        type: string
+      issue_number:
+        description: Issue or PR number to comment on
+        required: true
+        type: string
+      comment_id:
+        description: ID of the triggering comment
+        required: true
+        type: string
+      actor:
+        description: GitHub username who triggered this
+        required: true
+        type: string
+      is_pr:
+        description: Whether the trigger was from a PR
+        required: false
+        default: 'false'
+        type: string
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  claude:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run Claude
+        id: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          INSTRUCTION: ${{ inputs.instruction }}
+        run: |
+          set +e
+          claude --print --dangerously-skip-permissions "$INSTRUCTION" \
+            > /tmp/claude_output.txt 2>&1
+          EXIT_CODE=$?
+          set -e
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          echo "Claude exited with code: $EXIT_CODE"
+
+      - name: Commit any file changes Claude made
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add -A
+            git commit -m "chore: /claude changes from issue #${{ inputs.issue_number }}
+
+Requested by @${{ inputs.actor }}
+Instruction: ${{ inputs.instruction }}"
+            git push
+            echo "Changes committed and pushed."
+          else
+            echo "No file changes to commit."
+          fi
+
+      - name: Post result as comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          ACTOR: ${{ inputs.actor }}
+          INSTRUCTION: ${{ inputs.instruction }}
+          EXIT_CODE: ${{ steps.claude.outputs.exit_code }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          OUTPUT=$(head -c 60000 /tmp/claude_output.txt 2>/dev/null || echo "(no output)")
+
+          if [[ "$EXIT_CODE" == "0" ]]; then
+            STATUS_ICON="✅"
+            STATUS_TEXT="Claude completed successfully"
+          else
+            STATUS_ICON="❌"
+            STATUS_TEXT="Claude exited with code $EXIT_CODE"
+          fi
+
+          # Use jq to safely build and escape the JSON body
+          COMMENT_BODY=$(jq -rn \
+            --arg icon "$STATUS_ICON" \
+            --arg status "$STATUS_TEXT" \
+            --arg instruction "$INSTRUCTION" \
+            --arg actor "$ACTOR" \
+            --arg output "$OUTPUT" \
+            --arg run_url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+            '"\($icon) \($status)\n\n**Instruction:** `\($instruction)`\n**Requested by:** @\($actor)\n\n<details>\n<summary>Claude output</summary>\n\n```\n\($output)\n```\n\n</details>\n\n> 🤖 [View Actions run](\($run_url))"')
+
+          jq -n --arg body "$COMMENT_BODY" '{"body": $body}' \
+            | gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                --method POST \
+                --input -

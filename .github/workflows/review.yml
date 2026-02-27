@@ -1,0 +1,134 @@
+name: 🔍 Claude PR Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+      issue_number:
+        description: Issue/PR number to comment on
+        required: true
+        type: string
+      comment_id:
+        description: ID of the triggering comment
+        required: true
+        type: string
+      actor:
+        description: GitHub username who triggered this
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr diff "$PR_NUMBER" --repo "$REPO" > /tmp/pr_diff.txt 2>&1
+          DIFF_SIZE=$(wc -c < /tmp/pr_diff.txt)
+          echo "Diff size: $DIFF_SIZE bytes"
+          # Truncate to 80k chars to stay within Claude context limits
+          head -c 80000 /tmp/pr_diff.txt > /tmp/pr_diff_truncated.txt
+          echo "diff_size=$DIFF_SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude review
+        id: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          ACTOR: ${{ inputs.actor }}
+        run: |
+          DIFF=$(cat /tmp/pr_diff_truncated.txt)
+
+          PROMPT="You are a senior software engineer doing a code review.
+
+Review the following pull request diff for PR #$PR_NUMBER.
+
+Focus on:
+- Correctness and potential bugs
+- Security vulnerabilities (OWASP Top 10, injection, etc.)
+- Performance issues
+- Code clarity and maintainability
+- Missing edge cases or error handling
+- Best practices for the language/framework used
+
+Format your review as GitHub-flavored Markdown with these sections:
+## Summary
+Brief overview of what this PR does.
+
+## Issues Found
+Use severity labels: 🔴 Critical | 🟡 Warning | 🔵 Suggestion
+
+## Positives
+What was done well.
+
+## Verdict
+One of: ✅ Approve | 🔄 Request Changes | 💬 Comment
+
+---
+DIFF:
+$DIFF"
+
+          set +e
+          claude --print --dangerously-skip-permissions "$PROMPT" \
+            > /tmp/review_output.txt 2>&1
+          EXIT_CODE=$?
+          set -e
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Post review comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          ACTOR: ${{ inputs.actor }}
+          EXIT_CODE: ${{ steps.claude.outputs.exit_code }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          REVIEW=$(head -c 60000 /tmp/review_output.txt 2>/dev/null || echo "(no output)")
+
+          if [[ "$EXIT_CODE" == "0" ]]; then
+            HEADER="## 🔍 Claude Code Review — PR #$PR_NUMBER"
+          else
+            HEADER="## ❌ Claude Review Failed (exit code: $EXIT_CODE)"
+          fi
+
+          COMMENT_BODY=$(jq -rn \
+            --arg header "$HEADER" \
+            --arg review "$REVIEW" \
+            --arg actor "$ACTOR" \
+            --arg run_url "$SERVER_URL/$REPO/actions/runs/$RUN_ID" \
+            '"\($header)\n\n\($review)\n\n---\n> 🤖 Requested by @\($actor) · [View run](\($run_url))"')
+
+          jq -n --arg body "$COMMENT_BODY" '{"body": $body}' \
+            | gh api "repos/$REPO/issues/$ISSUE_NUMBER/comments" \
+                --method POST \
+                --input -
