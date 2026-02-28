@@ -13,8 +13,8 @@ permissions:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    # Only process comments that start with a slash command
-    if: startsWith(github.event.comment.body, '/')
+    # Only process issue_comment events with a slash command
+    if: github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/')
     steps:
       - name: Verify collaborator permission
         id: permission
